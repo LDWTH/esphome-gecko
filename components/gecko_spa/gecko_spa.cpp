@@ -206,8 +206,8 @@ void GeckoSpa::send_datetime_command(uint16_t year, uint8_t month, uint8_t day, 
       0x17, 0x0A, 0x00, 0x00, 0x00, 0x17, 0x09, 0x00, // Source & Destination (0-9)
       0x00, 0x00, 0x00, 0x00, 0x08, 0x4B,             // Protocol & Function Code (10-13)
       year_byte,                                      // Byte 14: Year from 2000
-      0x05,                                     // Byte 15: Month
-      0x05,                                       // Byte 16: Day
+      month_byte,                                     // Byte 15: Month
+      day_byte,                                       // Byte 16: Day
       weekday,                                        // Byte 17: Day of week (0=Sun)
       hour_byte,                                      // Byte 18: Hour (hex, 24h format)
       minute_byte,                                    // Byte 19: Minutes (hex)
