@@ -166,7 +166,7 @@ void GeckoSpa::send_program_command(uint8_t prog) {
 void GeckoSpa::send_temperature_command(float temp_c) {
   if (temp_c < 26.0 || temp_c > 40.0)
     return;
-  uint8_t temp_raw = (uint8_t)(temp_c * 18.0);
+  uint16_t temp_raw = (uint16_t)((temp_c * 18.0) - 512.0);
   uint8_t cmd[21] = {
       0x17, 0x0A, 0x00, 0x00, 0x00, 0x17, 0x09, 0x00,
       0x00, 0x00, 0x00, 0x00, 0x07, 0x46, config_version_, status_version_,
