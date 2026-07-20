@@ -176,6 +176,74 @@ void GeckoSpa::send_temperature_command(float temp_c) {
   ESP_LOGI(TAG, "Sent temperature %.1f command (raw=%02X)", temp_c, temp_raw);
 }
 
+void GeckoSpa::send_temperature_command(float temp_c) {
+  if (temp_c < 8.0 || temp_c > 40.0)
+    return;
+  // Use full 16 bit information
+  uint16_t temp_raw = (uint16_t)(temp_c * 18.0);
+
+  // Get high and low byte
+  uint8_t high_byte = (uint8_t)((temp_raw >> 8) & 0xFF);
+  uint8_t low_byte = (uint8_t)(temp_raw & 0xFF);
+  uint8_t cmd[21] = {
+      0x17, 0x0A, 0x00, 0x00, 0x00, 0x17, 0x09, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x07, 0x46, 0x50, 0x50,
+      0x00, 0x01, high_byte, low_byte, 0x00};
+  cmd[20] = calc_checksum(cmd, 21);
+  send_i2c_message(cmd, 21);
+  ESP_LOGI(TAG, "Sent temperature %.1f command (raw=%02X, high=%02X, low=%02X)", temp_c, temp_raw, high_byte, low_byte);
+}
+
+void GeckoSpa::send_datetime_command(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t second) {
+  // Basic validation to prevent invalid values
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59)
+    return;
+  
+  // Recalculate Year if necessary
+  if (year >= 2000) {
+    year -= 2000;
+  }
+  
+  // Automatically calculate the weekday using Sakamoto's algorithm
+  // Result matches Gecko: 0 = Sunday, 1 = Monday, ..., 5 = Friday, 6 = Saturday
+  int full_year = year + 2000;
+  int y = full_year - (month < 3);
+  static int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  uint8_t weekday = (uint8_t)((y + y/4 - y/100 + y/400 + t[month-1] + day) % 7);
+
+  // Prepare all time and date bytes dynamically
+  uint8_t year_byte    = year;
+  uint8_t day_byte     = day;
+  uint8_t month_byte   = month;
+  uint8_t hour_byte    = hour;
+  uint8_t minute_byte  = minute;
+  uint8_t second_byte  = second; // DYNAMIC: Now uses the actual seconds passed to the function
+
+  // Construct the 22-byte command array (Indices 0 to 21)
+  uint8_t cmd[] = {
+      0x17, 0x0A, 0x00, 0x00, 0x00, 0x17, 0x09, 0x00, // Source & Destination (0-9)
+      0x00, 0x00, 0x00, 0x00, 0x08, 0x4B,             // Protocol & Function Code (10-13)
+      year_byte,                                      // Byte 14: Year from 2000
+      month_byte,                                     // Byte 15: Month
+      day_byte,                                       // Byte 16: Day
+      weekday,                                        // Byte 17: Day of week (0=Sun)
+      hour_byte,                                      // Byte 18: Hour (hex, 24h format)
+      minute_byte,                                    // Byte 19: Minutes (hex)
+      second_byte,                                    // Byte 20: Seconds (hex)
+      0x00                                            // Byte 21: Checksum placeholder
+  };
+
+  // Calculate CRC-8 checksum for the full 22-byte packet
+  cmd[21] = calc_checksum(cmd, 22);
+
+  // Send the packet via I2C
+  send_i2c_message(cmd, 22);
+
+  // Log the final sent command to the serial console
+  ESP_LOGI(TAG, "Successfully synced DateTime (With Seconds): %02d.%02d. (Weekday=%d) %02d:%02d:%02d", 
+           day, month, weekday, hour, minute, second);
+}
+
 void GeckoSpa::request_status() {
   write_str("PING\n");
 }
