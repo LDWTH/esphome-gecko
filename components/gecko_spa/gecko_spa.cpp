@@ -176,24 +176,6 @@ void GeckoSpa::send_temperature_command(float temp_c) {
   ESP_LOGI(TAG, "Sent temperature %.1f command (raw=%02X)", temp_c, temp_raw);
 }
 
-void GeckoSpa::send_temperature_command(float temp_c) {
-  if (temp_c < 8.0 || temp_c > 40.0)
-    return;
-  // Use full 16 bit information
-  uint16_t temp_raw = (uint16_t)(temp_c * 18.0);
-
-  // Get high and low byte
-  uint8_t high_byte = (uint8_t)((temp_raw >> 8) & 0xFF);
-  uint8_t low_byte = (uint8_t)(temp_raw & 0xFF);
-  uint8_t cmd[21] = {
-      0x17, 0x0A, 0x00, 0x00, 0x00, 0x17, 0x09, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x07, 0x46, 0x50, 0x50,
-      0x00, 0x01, high_byte, low_byte, 0x00};
-  cmd[20] = calc_checksum(cmd, 21);
-  send_i2c_message(cmd, 21);
-  ESP_LOGI(TAG, "Sent temperature %.1f command (raw=%02X, high=%02X, low=%02X)", temp_c, temp_raw, high_byte, low_byte);
-}
-
 void GeckoSpa::send_datetime_command(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t second) {
   // Basic validation to prevent invalid values
   if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59)
@@ -224,8 +206,8 @@ void GeckoSpa::send_datetime_command(uint16_t year, uint8_t month, uint8_t day, 
       0x17, 0x0A, 0x00, 0x00, 0x00, 0x17, 0x09, 0x00, // Source & Destination (0-9)
       0x00, 0x00, 0x00, 0x00, 0x08, 0x4B,             // Protocol & Function Code (10-13)
       year_byte,                                      // Byte 14: Year from 2000
-      month_byte,                                     // Byte 15: Month
-      day_byte,                                       // Byte 16: Day
+      0x05,                                     // Byte 15: Month
+      0x05,                                       // Byte 16: Day
       weekday,                                        // Byte 17: Day of week (0=Sun)
       hour_byte,                                      // Byte 18: Hour (hex, 24h format)
       minute_byte,                                    // Byte 19: Minutes (hex)
