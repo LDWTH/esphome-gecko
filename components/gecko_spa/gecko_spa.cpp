@@ -164,16 +164,21 @@ void GeckoSpa::send_program_command(uint8_t prog) {
 }
 
 void GeckoSpa::send_temperature_command(float temp_c) {
-  if (temp_c < 26.0 || temp_c > 40.0)
+  if (temp_c < 8.0 || temp_c > 40.0)
     return;
-  uint16_t temp_raw = (uint16_t)((temp_c * 18.0) - 512.0);
+  // Use full 16 bit information
+  uint16_t temp_raw = (uint16_t)(temp_c * 18.0);
+
+  // Get high and low byte
+  uint8_t high_byte = (uint8_t)((temp_raw >> 8) & 0xFF);
+  uint8_t low_byte = (uint8_t)(temp_raw & 0xFF);
   uint8_t cmd[21] = {
       0x17, 0x0A, 0x00, 0x00, 0x00, 0x17, 0x09, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x07, 0x46, config_version_, status_version_,
-      0x00, 0x01, 0x02, temp_raw, 0x00};
+      0x00, 0x00, 0x00, 0x00, 0x07, 0x46, config_version, status_version,
+      0x00, 0x01, high_byte, low_byte, 0x00};
   cmd[20] = calc_checksum(cmd, 21);
   send_i2c_message(cmd, 21);
-  ESP_LOGI(TAG, "Sent temperature %.1f command (raw=%02X)", temp_c, temp_raw);
+  ESP_LOGI(TAG, "Sent temperature %.1f command (raw=%02X, high=%02X, low=%02X)", temp_c, temp_raw, high_byte, low_byte);
 }
 
 void GeckoSpa::send_datetime_command(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t second) {
@@ -920,12 +925,16 @@ void GeckoSpaClimate::setup() {
 
 climate::ClimateTraits GeckoSpaClimate::traits() {
   auto traits = climate::ClimateTraits();
-  traits.set_supports_current_temperature(true);
   traits.set_supported_modes({climate::CLIMATE_MODE_HEAT, climate::CLIMATE_MODE_COOL});
-  traits.set_supports_action(true);
-  traits.set_visual_min_temperature(26.0);
+  
+  traits.add_feature_flags(
+      climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE |
+      climate::CLIMATE_SUPPORTS_ACTION);
+
+  traits.set_visual_min_temperature(8.0);
   traits.set_visual_max_temperature(40.0);
   traits.set_visual_temperature_step(0.5);
+  traits.set_visual_current_temperature_step(0.5f);
   return traits;
 }
 
