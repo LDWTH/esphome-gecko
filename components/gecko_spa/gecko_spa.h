@@ -255,7 +255,7 @@ class GeckoSpaSelect : public Component, public select::Select {
  protected:
   GeckoSpa *parent_{nullptr};
   ESPPreferenceObject pref_;
-  uint8_t saved_index_{0xFF};
+  uint8_t saved_index_{1};
 };
 
 }  // namespace gecko_spa
