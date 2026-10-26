@@ -554,17 +554,44 @@ void GeckoSpa::process_i2c_message(const uint8_t *data, uint8_t len) {
                customer_id, num_zones,
                silent_mode < 5 ? silent_str[silent_mode] : "?");
 
-      // Reuse the status parser on the status portion, if we know what the length of the
-      // status message should be.
-      if (status_msg_len_ != 0) {
-        // Status portion is the very end of the message
-        int STATUS_OFFSET = msg_buffer_len_ - status_msg_len_;
-        // Check for some expected byte markers
-        if ((msg_buffer_[STATUS_OFFSET - 1] == 0x3B) &&
-            (msg_buffer_[STATUS_OFFSET + 1] == 0)) {
-          parse_status_message(&msg_buffer_[STATUS_OFFSET]);
+      // A 390-byte config+status message includes a 162-byte status tail on
+      // this inYT protocol version. Do not require a previous standalone status
+      // message: after a restart, only combined messages may be received.
+      // Keep the fallback specific to the observed frame layout.
+      static const int COMBINED_LEN = 390;
+      static const int EMBEDDED_STATUS_LEN = 162;
+      if (msg_buffer_len_ == COMBINED_LEN) {
+        const int status_offset = COMBINED_LEN - EMBEDDED_STATUS_LEN;
+        const uint8_t *status = &msg_buffer_[status_offset];
+        const GeckoLogOffsets &off = *log_offsets_;
+        const int target_pos = off.realSetPointG - 254;
+        const int actual_pos = off.displayedTempG - 254;
+        const uint16_t target_raw = (uint16_t(status[target_pos]) << 8) | status[target_pos + 1];
+        const uint16_t actual_raw = (uint16_t(status[actual_pos]) << 8) | status[actual_pos + 1];
+        const float target_c = target_raw / 18.0f;
+        const float actual_c = actual_raw / 18.0f;
+        // Structural markers and plausible temperatures for this spa model.
+        // These checks prevent accidental decoding of unrelated config tails.
+        if (status[0] == 0x01 && status[1] == 0x00 &&
+            target_c >= 8.0f && target_c <= 40.0f &&
+            actual_c >= 0.0f && actual_c <= 45.0f) {
+          if (status_msg_len_ == 0)
+            ESP_LOGI(TAG, "Embedded status found before standalone status (162 bytes)");
+          ESP_LOGI(TAG, "Status from config fallback: target=%.1f actual=%.1f", target_c, actual_c);
+          parse_status_message(status);
+        } else {
+          ESP_LOGW(TAG, "Embedded status rejected: marker=%02X/%02X target=%.1f actual=%.1f",
+                   status[0], status[1], target_c, actual_c);
+        }
+      } else if (status_msg_len_ != 0 && msg_buffer_len_ > status_msg_len_) {
+        // Preserve the original path for other pack variants, with bounds check.
+        const int status_offset = msg_buffer_len_ - status_msg_len_;
+        if (status_offset > 0 && msg_buffer_[status_offset - 1] == 0x3B &&
+            msg_buffer_[status_offset + 1] == 0x00) {
+          parse_status_message(&msg_buffer_[status_offset]);
         }
       }
+
     }
 
     // Reset buffer for next message
