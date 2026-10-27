@@ -905,6 +905,7 @@ int GeckoSpa::days_since_2000(int day, int month, int year) {
 }
 
 void GeckoSpa::parse_notification_message(const uint8_t *data) {
+  ESP_LOGW(TAG, "Reminder-Parser aufgerufen");
   // Notification entries start at byte 16, each entry is 6 bytes:
   // [ID] [DD] [MM] [YY] [INTERVAL_LO] [INTERVAL_HI]
   // ID: 0x01=Rinse Filter, 0x02=Clean Filter, 0x03=Change Water, 0x04=Spa Checkup
@@ -925,13 +926,13 @@ void GeckoSpa::parse_notification_message(const uint8_t *data) {
 
     // Diagnostic only: log the raw six-byte entry and the selected date format.
     // This does not change parsing, date calculation, or sensor publication.
-    ESP_LOGI(TAG,
+    ESP_LOGW(TAG,
              "Reminder RAW entry=%d offset=%d format=%s bytes=%02X %02X %02X %02X %02X %02X",
              i, offset,
              notif_date_format_ == NotifDateFormat::D_M_Y ? "D_M_Y" : "Y_M_D",
              data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
              data[offset + 4], data[offset + 5]);
-    ESP_LOGI(TAG,
+    ESP_LOGW(TAG,
              "Reminder DECODED entry=%d id=%u date_fields day=%u month=%u year=%u interval=%u",
              i, id, reset_day, reset_month, reset_year, interval);
 
@@ -952,7 +953,7 @@ void GeckoSpa::parse_notification_message(const uint8_t *data) {
     snprintf(date_str, sizeof(date_str), "%04d-%02d-%02d",
              1900 + reset_tm.tm_year, reset_tm.tm_mon + 1, reset_tm.tm_mday);
 
-    ESP_LOGI(TAG,
+    ESP_LOGW(TAG,
              "Reminder CALCULATED id=%u reset=%02u/%02u/%02u interval=%u due=%s",
              id, reset_day, reset_month, reset_year, interval, date_str);
 
