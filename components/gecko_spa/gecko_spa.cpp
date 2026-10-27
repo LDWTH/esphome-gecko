@@ -1,6 +1,8 @@
 #include "gecko_spa.h"
 #include "esphome/core/log.h"
 #include <ctime>
+#include <cctype>
+#include <cstring>
 
 namespace esphome {
 namespace gecko_spa {
@@ -297,13 +299,23 @@ void GeckoSpa::process_proxy_message(const char *msg) {
     if (*p == ':')
       p++;
 
-    // Decode hex to bytes
+    // Reject truncated or malformed proxy frames before accessing the buffer.
+    // The Arduino proxy sends a maximum of 128 bytes per RX line.
+    if (len <= 0 || len > 128 || strlen(p) != static_cast<size_t>(len) * 2) {
+      ESP_LOGW(TAG, "Invalid proxy RX frame length: %d", len);
+      return;
+    }
     uint8_t data[128];
-    for (int i = 0; i < len && i < 128; i++) {
+    for (int i = 0; i < len; i++) {
+      if (!isxdigit(static_cast<unsigned char>(p[i * 2])) ||
+          !isxdigit(static_cast<unsigned char>(p[i * 2 + 1]))) {
+        ESP_LOGW(TAG, "Invalid hex data in proxy RX frame");
+        return;
+      }
       data[i] = hex_to_byte(p[i * 2], p[i * 2 + 1]);
     }
 
-    process_i2c_message(data, len);
+    process_i2c_message(data, static_cast<uint8_t>(len));
   } else if (strcmp(msg, "READY") == 0) {
     ESP_LOGI(TAG, "Arduino proxy ready");
     arduino_ready_ = true;
@@ -334,14 +346,14 @@ void GeckoSpa::process_i2c_message(const uint8_t *data, uint8_t len) {
     // Split into 32 bytes per line (64 hex characters)
     const int CHUNK_BYTES = 32;
     char hex_str[68];
-    ESP_LOGI(TAG, "FULL-RX:%d bytes", len);
+    ESP_LOGD(TAG, "FULL-RX:%d bytes", len);
     for (int offset = 0; offset < len; offset += CHUNK_BYTES) {
       int chunk_len = (len - offset < CHUNK_BYTES) ? (len - offset) : CHUNK_BYTES;
       int pos = 0;
       for (int i = 0; i < chunk_len; i++) {
         pos += sprintf(hex_str + pos, "%02X", data[offset + i]);
       }
-      ESP_LOGI(TAG, "  %03d: %s", offset, hex_str);
+      ESP_LOGD(TAG, "  %03d: %s", offset, hex_str);
     }
   }
 
@@ -430,6 +442,12 @@ void GeckoSpa::process_i2c_message(const uint8_t *data, uint8_t len) {
     return;
   }
 
+  // Temporary reminder diagnostic: show whether 77-byte candidates still arrive
+  // and whether their marker matches the notification parser's current signature.
+  if (len == 77) {
+    ESP_LOGW(TAG, "Reminder-Kandidat: len=77, byte[6]=0x%02X", data[6]);
+  }
+
   // Notification message (77 bytes with byte[6]=0x0B)
   if (len == 77 && data[6] == 0x0B) {
     ESP_LOGD(TAG, "77-byte notification message");
@@ -465,10 +483,13 @@ void GeckoSpa::process_i2c_message(const uint8_t *data, uint8_t len) {
     // Add this part to buffer (strip 16-byte header including frame marker)
     int payload_start = HEADER_LEN;
     int payload_len = len - payload_start;
-    if (msg_buffer_len_ + payload_len <= sizeof(msg_buffer_)) {
-      memcpy(msg_buffer_ + msg_buffer_len_, data + payload_start, payload_len);
-      msg_buffer_len_ += payload_len;
+    if (payload_len > static_cast<int>(sizeof(msg_buffer_) - msg_buffer_len_)) {
+      ESP_LOGW(TAG, "Multi-part message exceeds buffer; dropping frame");
+      msg_buffer_len_ = 0;
+      return;
     }
+    memcpy(msg_buffer_ + msg_buffer_len_, data + payload_start, payload_len);
+    msg_buffer_len_ += payload_len;
 
     if (more_coming) {
       ESP_LOGD(TAG, "Message part (%d bytes), more coming. Buffer now %d bytes", len, msg_buffer_len_);
@@ -480,14 +501,14 @@ void GeckoSpa::process_i2c_message(const uint8_t *data, uint8_t len) {
     const int CHUNK_BYTES = 32;
     char hex_str[68];
     int total_bytes = msg_buffer_len_;
-    ESP_LOGI(TAG, "FULL-RX:%d bytes", total_bytes);
+    ESP_LOGD(TAG, "FULL-RX:%d bytes", total_bytes);
     for (int offset = 0; offset < total_bytes; offset += CHUNK_BYTES) {
       int chunk_len = (total_bytes - offset < CHUNK_BYTES) ? (total_bytes - offset) : CHUNK_BYTES;
       int pos = 0;
       for (int i = 0; i < chunk_len; i++) {
         pos += sprintf(hex_str + pos, "%02X", msg_buffer_[offset + i]);
       }
-      ESP_LOGI(TAG, "  %03d: %s", offset, hex_str);
+      ESP_LOGD(TAG, "  %03d: %s", offset, hex_str);
     }
 
     // Check message type by size
@@ -566,6 +587,13 @@ void GeckoSpa::process_i2c_message(const uint8_t *data, uint8_t len) {
         const GeckoLogOffsets &off = *log_offsets_;
         const int target_pos = off.realSetPointG - 254;
         const int actual_pos = off.displayedTempG - 254;
+        if (target_pos < 0 || actual_pos < 0 ||
+            target_pos + 1 >= EMBEDDED_STATUS_LEN ||
+            actual_pos + 1 >= EMBEDDED_STATUS_LEN) {
+          ESP_LOGW(TAG, "Embedded status offsets out of bounds");
+          msg_buffer_len_ = 0;
+          return;
+        }
         const uint16_t target_raw = (uint16_t(status[target_pos]) << 8) | status[target_pos + 1];
         const uint16_t actual_raw = (uint16_t(status[actual_pos]) << 8) | status[actual_pos + 1];
         const float target_c = target_raw / 18.0f;
