@@ -923,8 +923,22 @@ void GeckoSpa::parse_notification_message(const uint8_t *data) {
     }
     uint16_t interval = data[offset + 4] | (data[offset + 5] << 8);
 
-    if (id == 0 || interval == 0)
+    // Diagnostic only: log the raw six-byte entry and the selected date format.
+    // This does not change parsing, date calculation, or sensor publication.
+    ESP_LOGI(TAG,
+             "Reminder RAW entry=%d offset=%d format=%s bytes=%02X %02X %02X %02X %02X %02X",
+             i, offset,
+             notif_date_format_ == NotifDateFormat::D_M_Y ? "D_M_Y" : "Y_M_D",
+             data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+             data[offset + 4], data[offset + 5]);
+    ESP_LOGI(TAG,
+             "Reminder DECODED entry=%d id=%u date_fields day=%u month=%u year=%u interval=%u",
+             i, id, reset_day, reset_month, reset_year, interval);
+
+    if (id == 0 || interval == 0) {
+      ESP_LOGW(TAG, "Reminder entry=%d skipped (id=%u interval=%u)", i, id, interval);
       continue;
+    }
 
     // Calculate due date: reset_date + interval days
     struct tm reset_tm = {};
@@ -938,7 +952,8 @@ void GeckoSpa::parse_notification_message(const uint8_t *data) {
     snprintf(date_str, sizeof(date_str), "%04d-%02d-%02d",
              1900 + reset_tm.tm_year, reset_tm.tm_mon + 1, reset_tm.tm_mday);
 
-    ESP_LOGI(TAG, "Notification %d: reset=%02d/%02d/%02d interval=%d due=%s",
+    ESP_LOGI(TAG,
+             "Reminder CALCULATED id=%u reset=%02u/%02u/%02u interval=%u due=%s",
              id, reset_day, reset_month, reset_year, interval, date_str);
 
     text_sensor::TextSensor *sensor = nullptr;
