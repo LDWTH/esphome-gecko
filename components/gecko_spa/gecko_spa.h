@@ -159,7 +159,7 @@ class GeckoSpa : public Component, public uart::UARTDevice {
   text_sensor::TextSensor *pack_type_sensor_{nullptr};
   sensor::Sensor *pump_timer_sensor_{nullptr};
   GPIOPin *reset_pin_{nullptr};
-  NotifDateFormat notif_date_format_{NotifDateFormat::D_M_Y};
+  NotifDateFormat notif_date_format_{NotifDateFormat::Y_M_D};
 
   // State
   bool light_state_{false};
