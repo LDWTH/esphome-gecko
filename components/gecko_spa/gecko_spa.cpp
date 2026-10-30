@@ -748,7 +748,8 @@ void GeckoSpa::parse_status_message(const uint8_t *data) {
 
   float new_target = target_temp;
   float new_actual = actual_temp;
-  bool temp_valid = (target_raw != 0 || actual_raw != 0);
+  bool target_valid = (target_raw != 0);
+  bool actual_valid = (actual_raw != 0);
 
   // On first status message, publish all states
   bool first = !first_status_received_;
@@ -824,10 +825,21 @@ void GeckoSpa::parse_status_message(const uint8_t *data) {
   }
 
   // Only update temperature if valid data was received
-  if (temp_valid && (first || abs(new_target - target_temp_) > 0.1 || abs(new_actual - actual_temp_) > 0.1)) {
+  if (target_valid && (!std::isfinite(target_temp_) ||
+      fabsf(new_target - target_temp_) > 0.1f)) {
     target_temp_ = new_target;
+    temp_changed = true;
+  }
+
+  if (actual_valid && (!std::isfinite(actual_temp_) ||
+      fabsf(new_actual - actual_temp_) > 0.1f)) {
     actual_temp_ = new_actual;
-    ESP_LOGI(TAG, "Temp: target=%.1f actual=%.1f", target_temp_, actual_temp_);
+    temp_changed = true;
+  }
+
+  if (temp_changed) {
+    ESP_LOGI(TAG, "Temp: target=%.1f actual=%.1f",
+             target_temp_, actual_temp_);
     update_climate_state();
   }
 
@@ -858,17 +870,35 @@ void GeckoSpa::update_climate_state() {
   if (!climate_)
     return;
 
+  // Keine ungültigen Temperaturwerte an ESPHome/MQTT veröffentlichen.
+  // Erst veröffentlichen, wenn beide Temperaturen gültig sind.
+  if (!std::isfinite(target_temp_) ||
+      !std::isfinite(actual_temp_)) {
+    return;
+  }
+
   climate_->target_temperature = target_temp_;
   climate_->current_temperature = actual_temp_;
 
-  // Set mode based on target vs actual temperature
-  if (std::isfinite(target_temp_) && std::isfinite(actual_temp_)) {
-    if (target_temp_ < actual_temp_) {
-      climate_->mode = climate::CLIMATE_MODE_COOL;
-    } else {
-      climate_->mode = climate::CLIMATE_MODE_HEAT;
-    }
+  // Betriebsmodus anhand der Temperaturen bestimmen.
+  if (target_temp_ < actual_temp_) {
+    climate_->mode = climate::CLIMATE_MODE_COOL;
+  } else {
+    climate_->mode = climate::CLIMATE_MODE_HEAT;
   }
+
+  // Aktuelle Heiz-/Kühlaktion bestimmen.
+  if (heating_state_) {
+    climate_->action = climate::CLIMATE_ACTION_HEATING;
+  } else if (target_temp_ < actual_temp_) {
+    climate_->action = climate::CLIMATE_ACTION_COOLING;
+  } else {
+    climate_->action = climate::CLIMATE_ACTION_IDLE;
+  }
+
+  // Gültigen Climate-Zustand veröffentlichen.
+  climate_->publish_state();
+}
 
   // Set action based on heating flag and temperature comparison
   // heating_state_ is the authoritative source for whether heater is running
@@ -971,7 +1001,6 @@ void GeckoSpaClimate::setup() {
   this->action = climate::CLIMATE_ACTION_IDLE;
   this->target_temperature = NAN;
   this->current_temperature = NAN;
-  this->publish_state();
 }
 
 climate::ClimateTraits GeckoSpaClimate::traits() {
