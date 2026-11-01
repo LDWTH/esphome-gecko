@@ -748,8 +748,13 @@ void GeckoSpa::parse_status_message(const uint8_t *data) {
 
   float new_target = target_temp;
   float new_actual = actual_temp;
-  bool target_valid = (target_raw != 0);
-  bool actual_valid = (actual_raw != 0);
+  // Plausible ranges, same as for the embedded status in config messages
+  bool target_valid = (target_raw != 0 && target_temp >= 8.0f && target_temp <= 40.0f);
+  bool actual_valid = (actual_raw != 0 && actual_temp >= 0.0f && actual_temp <= 45.0f);
+  if (!target_valid || !actual_valid) {
+    ESP_LOGW(TAG, "Implausible temperature ignored: target=%.1f (raw=%u) actual=%.1f (raw=%u)",
+             target_temp, target_raw, actual_temp, actual_raw);
+  }
 
   // On first status message, publish all states
   bool first = !first_status_received_;
@@ -825,6 +830,7 @@ void GeckoSpa::parse_status_message(const uint8_t *data) {
   }
 
   // Only update temperature if valid data was received
+  bool temp_changed = false;
   if (target_valid && (!std::isfinite(target_temp_) ||
       fabsf(new_target - target_temp_) > 0.1f)) {
     target_temp_ = new_target;
@@ -900,20 +906,6 @@ void GeckoSpa::update_climate_state() {
   climate_->publish_state();
 }
 
-  // Set action based on heating flag and temperature comparison
-  // heating_state_ is the authoritative source for whether heater is running
-  if (heating_state_) {
-    climate_->action = climate::CLIMATE_ACTION_HEATING;
-  } else if (target_temp_ < actual_temp_) {
-    // Spa is cooling down (no active cooling, just natural heat loss)
-    climate_->action = climate::CLIMATE_ACTION_COOLING;
-  } else {
-    climate_->action = climate::CLIMATE_ACTION_IDLE;
-  }
-
-  climate_->publish_state();
-}
-
 int GeckoSpa::days_since_2000(int day, int month, int year) {
   // Calculate days since Jan 1, 2000
   struct tm tm = {};
@@ -950,7 +942,7 @@ void GeckoSpa::parse_notification_message(const uint8_t *data) {
     }
     uint16_t interval = data[offset + 4] | (data[offset + 5] << 8);
 
-    if (id == 0 || interval == 0) {
+    if (id == 0 || id > 4 || interval == 0) {
       ESP_LOGW(TAG, "Reminder entry=%d skipped (id=%u interval=%u)", i, id, interval);
       continue;
     }

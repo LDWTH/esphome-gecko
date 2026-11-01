@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include "esphome/core/component.h"
@@ -179,8 +180,8 @@ class GeckoSpa : public Component, public uart::UARTDevice {
   uint8_t pack_type_{0};
   uint8_t pump_timer_{0};
   uint8_t program_id_{0xFF};
-  float target_temp_{0};
-  float actual_temp_{0};
+  float target_temp_{NAN};
+  float actual_temp_{NAN};
   uint32_t last_i2c_time_{0};
   uint32_t last_go_send_time_{0};
   uint32_t reset_start_time_{0};
