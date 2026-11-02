@@ -993,6 +993,18 @@ void GeckoSpaClimate::setup() {
   this->action = climate::CLIMATE_ACTION_IDLE;
   this->target_temperature = NAN;
   this->current_temperature = NAN;
+
+  // Die MQTT-Komponente von ESPHome veröffentlicht die Zieltemperatur beim
+  // Verbindungsaufbau ohne NAN-Prüfung (Payload "nan"). Daher die zuletzt
+  // gespeicherte, plausible Zieltemperatur aus dem Flash wiederherstellen.
+  auto restored = this->restore_state_();
+  if (restored.has_value() && std::isfinite(restored->target_temperature) &&
+      restored->target_temperature >= 8.0f && restored->target_temperature <= 40.0f) {
+    this->target_temperature = restored->target_temperature;
+    ESP_LOGI(TAG, "Restored target temperature: %.1f", this->target_temperature);
+  } else {
+    ESP_LOGW(TAG, "No plausible target temperature stored, waiting for spa status");
+  }
 }
 
 climate::ClimateTraits GeckoSpaClimate::traits() {
@@ -1013,6 +1025,11 @@ climate::ClimateTraits GeckoSpaClimate::traits() {
 void GeckoSpaClimate::control(const climate::ClimateCall &call) {
   if (call.get_target_temperature().has_value()) {
     float temp = *call.get_target_temperature();
+    // Unplausible Sollwerte weder senden noch veröffentlichen
+    if (!std::isfinite(temp) || temp < 8.0f || temp > 40.0f) {
+      ESP_LOGW(TAG, "Rejected implausible target temperature: %.1f", temp);
+      return;
+    }
     this->target_temperature = temp;
     parent_->send_temperature_command(temp);
   }
