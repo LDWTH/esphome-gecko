@@ -190,6 +190,13 @@ class GeckoSpa : public Component, public uart::UARTDevice {
   bool arduino_ready_{false};           // True after Arduino sends READY
   char notification_date_[4][12]{ "", "", "", ""};
 
+  // Reminder-Fälligkeitsdaten im Flash, damit sie einen ESP-Neustart überstehen
+  struct NotificationCache {
+    char dates[4][12];
+  };
+  ESPPreferenceObject notification_pref_;
+  void restore_notifications_();
+
   // Version tracking (parsed from handshake XML filenames)
   uint8_t config_version_{0};   // e.g., 82 from inYT_C82.xml
   uint8_t status_version_{0};   // e.g., 81 from inYT_S81.xml

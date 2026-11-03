@@ -1,5 +1,6 @@
 #include "gecko_spa.h"
 #include "esphome/core/log.h"
+#include "esphome/core/helpers.h"
 #include <ctime>
 #include <cctype>
 #include <cstring>
@@ -21,6 +22,33 @@ void GeckoSpa::setup() {
   if (reset_pin_) {
     reset_pin_->setup();
     reset_pin_->digital_write(true);  // RST is active LOW, keep HIGH
+  }
+  restore_notifications_();
+}
+
+void GeckoSpa::restore_notifications_() {
+  // Fester Schlüssel, damit der Cache unabhängig von Entity-Namen bleibt
+  notification_pref_ = global_preferences->make_preference<NotificationCache>(
+      fnv1_hash("gecko_spa_notifications"), true);
+
+  NotificationCache cache{};
+  if (!notification_pref_.load(&cache)) {
+    ESP_LOGI(TAG, "No cached reminders in flash");
+    return;
+  }
+
+  text_sensor::TextSensor *sensors[4] = {rinse_filter_sensor_, clean_filter_sensor_,
+                                         change_water_sensor_, spa_checkup_sensor_};
+  for (int i = 0; i < 4; i++) {
+    // Nur gültige Einträge im Format YYYY-MM-DD übernehmen
+    cache.dates[i][sizeof(cache.dates[i]) - 1] = '\0';
+    const char *d = cache.dates[i];
+    if (strlen(d) != 10 || d[4] != '-' || d[7] != '-')
+      continue;
+    strcpy(notification_date_[i], d);
+    ESP_LOGI(TAG, "Restored reminder %d from flash: %s", i + 1, d);
+    if (sensors[i])
+      sensors[i]->publish_state(d);
   }
 }
 
@@ -927,6 +955,7 @@ void GeckoSpa::parse_notification_message(const uint8_t *data) {
   // Notification entries start at byte 16, each entry is 6 bytes:
   // [ID] [DD] [MM] [YY] [INTERVAL_LO] [INTERVAL_HI]
   // ID: 0x01=Rinse Filter, 0x02=Clean Filter, 0x03=Change Water, 0x04=Spa Checkup
+  bool cache_changed = false;
   for (int i = 0; i < 4; i++) {
     int offset = 16 + (i * 6);
     uint8_t id = data[offset];
@@ -983,6 +1012,18 @@ void GeckoSpa::parse_notification_message(const uint8_t *data) {
         sensor->publish_state(date_str);
       }
       strcpy(notification_date_[id - 1], date_str);
+      cache_changed = true;
+    }
+  }
+
+  // Nur bei tatsächlicher Änderung in den Flash schreiben (schont den Speicher)
+  if (cache_changed) {
+    NotificationCache cache{};
+    memcpy(cache.dates, notification_date_, sizeof(cache.dates));
+    if (notification_pref_.save(&cache)) {
+      ESP_LOGI(TAG, "Reminders saved to flash");
+    } else {
+      ESP_LOGW(TAG, "Saving reminders to flash failed");
     }
   }
 }
