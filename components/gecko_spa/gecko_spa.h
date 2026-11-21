@@ -17,6 +17,8 @@
 namespace esphome {
 namespace gecko_spa {
 
+class GeckoSpaSelect;
+
 // Geckolib-compatible offset structure for log/status messages
 // Offsets are geckolib offsets (base 256), convert to message byte with: byte = offset - 254
 struct GeckoLogOffsets {
@@ -86,7 +88,7 @@ class GeckoSpa : public Component, public uart::UARTDevice {
   // Entity setters - binary sensors (read-only status)
   void set_waterfall_sensor(binary_sensor::BinarySensor *bs) { waterfall_sensor_ = bs; }
   void set_blower_sensor(binary_sensor::BinarySensor *bs) { blower_sensor_ = bs; }
-  void set_program_select(select::Select *sel) { program_select_ = sel; }
+  void set_program_select(GeckoSpaSelect *sel) { program_select_ = sel; }
   void set_standby_sensor(binary_sensor::BinarySensor *bs) {
     standby_sensor_ = bs;
     bs->publish_state(standby_state_);
@@ -145,7 +147,7 @@ class GeckoSpa : public Component, public uart::UARTDevice {
   // Entity pointers - binary sensors (read-only)
   binary_sensor::BinarySensor *waterfall_sensor_{nullptr};
   binary_sensor::BinarySensor *blower_sensor_{nullptr};
-  select::Select *program_select_{nullptr};
+  GeckoSpaSelect *program_select_{nullptr};
   binary_sensor::BinarySensor *standby_sensor_{nullptr};
   binary_sensor::BinarySensor *connected_sensor_{nullptr};
   climate::Climate *climate_{nullptr};
@@ -180,6 +182,11 @@ class GeckoSpa : public Component, public uart::UARTDevice {
   uint8_t pack_type_{0};
   uint8_t pump_timer_{0};
   uint8_t program_id_{0xFF};
+  // Abgleich Wasserpflegemodus nach Neustart: einmal pro Boot, falls der Spa sein Programm nicht selbst meldet
+  static const uint32_t PROGRAM_SYNC_DELAY_MS = 10000;
+  bool program_synced_{false};
+  uint32_t first_status_time_{0};
+  void check_program_sync_();
   float target_temp_{NAN};
   float actual_temp_{NAN};
   uint32_t last_i2c_time_{0};
@@ -260,10 +267,17 @@ class GeckoSpaSelect : public Component, public select::Select {
 
   void control(const std::string &value) override;
 
+  // Vom Spa gemeldetes Programm übernehmen und im Flash sichern
+  void apply_spa_program(uint8_t prog);
+  // Zuletzt gespeichertes Programm (Fallback: 1 = Standard)
+  uint8_t get_saved_index() const { return saved_index_; }
+
  protected:
+  void save_index_(uint8_t prog);
   GeckoSpa *parent_{nullptr};
   ESPPreferenceObject pref_;
   uint8_t saved_index_{1};
+  bool index_loaded_{false};  // true, sobald ein gültiger Wert im Flash steht
 };
 
 }  // namespace gecko_spa

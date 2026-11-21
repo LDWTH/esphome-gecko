@@ -97,6 +97,8 @@ void GeckoSpa::loop() {
     }
   }
 
+  check_program_sync_();
+
   // Send GO keep-alive every 23 seconds (triggers handshake sequence)
   if (millis() - last_go_send_time_ > 23000) {
     last_go_send_time_ = millis();
@@ -192,6 +194,24 @@ void GeckoSpa::send_program_command(uint8_t prog) {
   cmd[17] = calc_checksum(cmd, 18);
   send_i2c_message(cmd, 18);
   ESP_LOGI(TAG, "Sent program %d command", prog);
+  // Ein gesendetes Programm gilt als abgeglichen (z.B. Auswahl aus HA vor Ablauf der Wartezeit)
+  program_synced_ = true;
+}
+
+void GeckoSpa::check_program_sync_() {
+  if (program_synced_ || !first_status_received_ || program_select_ == nullptr)
+    return;
+  if (millis() - first_status_time_ < PROGRAM_SYNC_DELAY_MS)
+    return;
+  // Spa hat innerhalb der Wartezeit kein Programm gemeldet -> ESP-Wert aktiv senden,
+  // damit ESP und Gecko-Steuerung wieder synchron sind
+  uint8_t prog = program_select_->get_saved_index();
+  if (prog > 4)
+    prog = 1;
+  static const char *prog_names[] = {"Away", "Standard", "Energy", "Super Energy", "Weekend"};
+  ESP_LOGI(TAG, "No program reported by spa after boot, syncing ESP value: %s (%d)", prog_names[prog], prog);
+  send_program_command(prog);
+  program_select_->publish_state(prog_names[prog]);
 }
 
 void GeckoSpa::send_temperature_command(float temp_c) {
@@ -482,13 +502,15 @@ void GeckoSpa::process_i2c_message(const uint8_t *data, uint8_t len) {
   if (len == 18) {
     ESP_LOGI(TAG, "18-byte msg: [1]=%02X [16]=%02X", data[1], data[16]);
     uint8_t prog = data[16];
+    if (prog <= 4) {
+      // Spa hat sein Programm selbst gemeldet -> kein aktiver Abgleich nötig
+      program_synced_ = true;
+    }
     if (prog <= 4 && prog != program_id_) {
       program_id_ = prog;
       ESP_LOGI(TAG, "Program from spa: %d", prog);
-      if (program_select_) {
-        static const char *prog_names[] = {"Away", "Standard", "Energy", "Super Energy", "Weekend"};
-        program_select_->publish_state(prog_names[prog]);
-      }
+      if (program_select_)
+        program_select_->apply_spa_program(prog);
     }
     return;
   }
@@ -788,6 +810,7 @@ void GeckoSpa::parse_status_message(const uint8_t *data) {
   bool first = !first_status_received_;
   if (first) {
     first_status_received_ = true;
+    first_status_time_ = millis();
     ESP_LOGI(TAG, "First status received, publishing all states");
   }
 
@@ -1102,9 +1125,13 @@ void GeckoSpaSelect::setup() {
 
   // Restore saved state on boot
   if (this->pref_.load(&this->saved_index_) && this->saved_index_ < 5) {
+    this->index_loaded_ = true;
     static const char *prog_names[] = {"Away", "Standard", "Energy", "Super Energy", "Weekend"};
     this->publish_state(prog_names[this->saved_index_]);
     ESP_LOGI("gecko_spa", "Restored program state: %s (index %d)", prog_names[this->saved_index_], this->saved_index_);
+  } else {
+    // Kein (gültiger) Wert im Flash -> Fallback Standard
+    this->saved_index_ = 1;
   }
 }
 
@@ -1121,12 +1148,28 @@ void GeckoSpaSelect::control(const std::string &value) {
   else if (value == "Weekend")
     prog = 4;
 
-  // Save the state
-  this->saved_index_ = prog;
-  this->pref_.save(&this->saved_index_);
+  this->save_index_(prog);
 
   parent_->send_program_command(prog);
   this->publish_state(value);
+}
+
+void GeckoSpaSelect::apply_spa_program(uint8_t prog) {
+  if (prog > 4)
+    return;
+  static const char *prog_names[] = {"Away", "Standard", "Energy", "Super Energy", "Weekend"};
+  // Auch Änderungen am Spa-Panel speichern, damit nach Neustart der richtige Wert gilt
+  this->save_index_(prog);
+  this->publish_state(prog_names[prog]);
+}
+
+void GeckoSpaSelect::save_index_(uint8_t prog) {
+  // Nur bei Änderung schreiben, um den Flash zu schonen
+  if (prog == this->saved_index_ && this->index_loaded_)
+    return;
+  this->saved_index_ = prog;
+  this->index_loaded_ = true;
+  this->pref_.save(&this->saved_index_);
 }
 
 }  // namespace gecko_spa
