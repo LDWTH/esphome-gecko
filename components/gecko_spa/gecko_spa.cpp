@@ -1,6 +1,9 @@
 #include "gecko_spa.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
+#ifdef USE_CONTROLLER_REGISTRY
+#include "esphome/core/controller_registry.h"
+#endif
 #include <ctime>
 #include <cctype>
 #include <cstring>
@@ -10,6 +13,8 @@ namespace esphome {
 namespace gecko_spa {
 
 static const char *const TAG = "gecko_spa";
+// Wartezeit, bis ein abgelehnter Schaltbefehl mit dem echten Zustand korrigiert wird
+static const uint32_t SWITCH_CONFIRM_TIMEOUT_MS = 3000;
 
 // GO keep-alive message
 const uint8_t GeckoSpa::GO_MESSAGE[15] = {
@@ -1115,7 +1120,23 @@ void GeckoSpaSwitch::write_state(bool state) {
   } else if (switch_type_ == "pump4") {
     parent_->send_pump4_command(state ? 1 : 0);  // EXPERIMENTAL
   }
-  // State will be published when spa confirms the change
+  // Der Zustand wird veröffentlicht, sobald das Spa die Änderung bestätigt.
+  // Lehnt das Spa den Befehl ab (z.B. Pumpe im Filter-/Spül-/Heizzyklus),
+  // ändert sich der Zustand nie und es würde nichts veröffentlicht. Clients
+  // mit optimistischem Schalter (MQTT, WebUI) blieben dann auf dem falschen
+  // Wert stehen. Daher nach einer Wartezeit den tatsächlichen Zustand erneut
+  // senden.
+  this->set_timeout("confirm", SWITCH_CONFIRM_TIMEOUT_MS, [this]() { this->republish_state(); });
+}
+
+void GeckoSpaSwitch::republish_state() {
+  // publish_state() würde einen unveränderten Wert verwerfen (Deduplicator),
+  // daher die State-Callbacks direkt auslösen.
+  ESP_LOGD(TAG, "'%s': Re-sending state %s", this->get_name().c_str(), ONOFF(this->state));
+  this->state_callback_.call(this->state);
+#if defined(USE_SWITCH) && defined(USE_CONTROLLER_REGISTRY)
+  ControllerRegistry::notify_switch_update(this);
+#endif
 }
 
 // GeckoSpaSelect implementation

@@ -255,6 +255,10 @@ class GeckoSpaSwitch : public Component, public switch_::Switch {
 
   void write_state(bool state) override;
 
+  // Aktuellen Zustand erneut an alle Listener (MQTT, API, WebUI) senden,
+  // auch wenn er sich nicht geändert hat (umgeht die Deduplizierung).
+  void republish_state();
+
  protected:
   GeckoSpa *parent_{nullptr};
   std::string switch_type_;
